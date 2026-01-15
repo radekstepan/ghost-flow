@@ -13,9 +13,10 @@ class AIProcessor:
 
     def transcribe(self, audio_path: str) -> str:
         client = self._get_client()
+        # Use the configured transcription model (default: whisper-1)
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
-                model="whisper-1",
+                model=current_config.transcription_model,
                 file=audio_file,
                 language="en"
             )
@@ -23,6 +24,7 @@ class AIProcessor:
 
     def refine(self, raw_text: str) -> str:
         client = self._get_client()
+        # Use the configured refinement model (default: gpt-4o-mini)
         response = client.chat.completions.create(
             model=current_config.model,
             messages=[

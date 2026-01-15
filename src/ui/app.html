@@ -291,7 +291,19 @@
         window.__GF_BOOTED__ = true;
         window.dispatchEvent(new Event('gf:booted'));
         try {
-            const { useState, useEffect, useRef } = React;
+            const { useState, useEffect, useRef, useCallback } = React;
+
+            // --- CONSTANTS ---
+            const AUDIO_MODELS = [
+                { id: 'gpt-audio-mini-2025-12-15', label: 'GPT Audio Mini (2025)' },
+                { id: 'whisper-1', label: 'Whisper-1 (Legacy)' }
+            ];
+
+            const REFINEMENT_MODELS = [
+                { id: 'gpt-5-nano-2025-08-07', label: 'GPT-5 Nano (2025)' },
+                { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Standard)' },
+                { id: 'gpt-4o', label: 'GPT-4o (High Intelligence)' }
+            ];
 
             // --- ICONS ---
             const Icons = {
@@ -330,7 +342,6 @@
                 const isDone = stage === 'done';
                 const isListening = stage === 'listening';
 
-                // If idle, we usually return null, but for debugging/connection checks, we might want to see something
                 if (stage === 'idle') return null;
 
                 return (
@@ -380,44 +391,113 @@
                 );
             }
 
+            // --- DEBOUNCE HOOK ---
+            function useDebounce(value, delay) {
+                const [debouncedValue, setDebouncedValue] = useState(value);
+                useEffect(() => {
+                    const handler = setTimeout(() => {
+                        setDebouncedValue(value);
+                    }, delay);
+                    return () => clearTimeout(handler);
+                }, [value, delay]);
+                return debouncedValue;
+            }
+
             // --- DASHBOARD ---
-            function Dashboard({ bridge }) {
+            function Dashboard({ bridge, overlayState }) {
                 const [activeTab, setActiveTab] = useState('general');
                 const [permissionsGranted, setPermissionsGranted] = useState(true);
+                const [settingsLoaded, setSettingsLoaded] = useState(false);
+                
                 const [settings, setSettings] = useState({
                     openai_api_key: '',
-                    model: 'gpt-4o-mini',
+                    transcription_model: 'gpt-audio-mini-2025-12-15',
+                    model: 'gpt-5-nano-2025-08-07',
                     system_prompt: '',
                     sound_feedback: true
                 });
 
+                // Debounce settings object for saving
+                const debouncedSettings = useDebounce(settings, 800);
+
+                // Initial Load
                 useEffect(() => {
                     if (!bridge) return;
                     
-                    // Connect specific dashboard signals
-                    bridge.settings_loaded.connect((jsonStr) => {
-                        console.log("JS [Dashboard]: Settings loaded", jsonStr);
-                        try {
-                            const data = JSON.parse(jsonStr);
-                            setSettings(data);
-                            if (data.permissions_granted === false) setPermissionsGranted(false);
-                            else setPermissionsGranted(true);
-                        } catch(e) { console.error(e); }
-                    });
-
-                    // Request initial settings
-                    bridge.request_settings();
+                    // Use callback approach for reliability
+                    if (bridge.get_settings) {
+                        bridge.get_settings((jsonStr) => {
+                            console.log("JS [Dashboard]: Settings loaded", jsonStr);
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                setSettings(data);
+                                setSettingsLoaded(true); // Allow saving now
+                                if (data.permissions_granted === false) setPermissionsGranted(false);
+                                else setPermissionsGranted(true);
+                            } catch(e) { console.error(e); }
+                        });
+                    }
                 }, [bridge]);
 
+                // Save Effect (Only fires when debouncedSettings changes)
+                useEffect(() => {
+                    if (!bridge || !settingsLoaded) return;
+                    console.log("JS: Saving settings (debounced)");
+                    bridge.save_settings(JSON.stringify(debouncedSettings));
+                }, [debouncedSettings, bridge, settingsLoaded]);
+
                 const updateSetting = (key, value) => {
-                    const newSettings = { ...settings, [key]: value };
-                    setSettings(newSettings);
-                    if(bridge) bridge.save_settings(JSON.stringify(newSettings));
+                    // Update React state immediately (UI responsiveness)
+                    setSettings(prev => ({ ...prev, [key]: value }));
                 };
 
-                const simulate = () => {
-                    if(bridge) bridge.simulate_recording();
+                // Helper to determine status UI for footer
+                const getStatusUI = () => {
+                    if (!permissionsGranted) {
+                        return { 
+                            dot: 'bg-red-500 animate-pulse', 
+                            label: 'System: Paused', 
+                            sub: 'Permissions Required', 
+                            textClass: 'text-red-400' 
+                        };
+                    }
+                    
+                    const { stage, text } = overlayState || { stage: 'idle' };
+                    
+                    if (stage === 'listening') {
+                        return { 
+                            dot: 'bg-indigo-500 animate-pulse', 
+                            label: 'Listening...', 
+                            sub: 'Release F8 to finish', 
+                            textClass: 'text-indigo-400' 
+                        };
+                    }
+                    if (stage === 'processing') {
+                        return { 
+                            dot: 'bg-purple-500 animate-pulse', 
+                            label: 'Processing...', 
+                            sub: 'Ghost Flow is thinking', 
+                            textClass: 'text-purple-400' 
+                        };
+                    }
+                    if (stage === 'done') {
+                        return { 
+                            dot: 'bg-emerald-500', 
+                            label: 'Complete', 
+                            sub: text || 'Pasted to clipboard', 
+                            textClass: 'text-emerald-400' 
+                        };
+                    }
+                    
+                    return { 
+                        dot: 'bg-emerald-500/50', 
+                        label: 'System: Online', 
+                        sub: 'Ready to record (F8)', 
+                        textClass: 'text-gray-500' 
+                    };
                 };
+
+                const status = getStatusUI();
 
                 return (
                     <div className="relative flex h-screen w-full bg-neutral-900 text-gray-100 font-sans selection:bg-indigo-500/30 overflow-hidden">
@@ -446,12 +526,16 @@
                                 </nav>
                             </div>
 
-                            <div className="px-6 py-4 border-t border-white/5">
-                                <div className="flex items-center gap-3 text-xs">
-                                    <div className={`w-2 h-2 rounded-full ${permissionsGranted ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`}></div>
-                                    <span className={permissionsGranted ? 'text-gray-500' : 'text-red-400 font-medium'}>
-                                        {permissionsGranted ? 'System: Online' : 'System: Paused'}
-                                    </span>
+                            {/* Extended Footer Status */}
+                            <div className="px-6 py-4 border-t border-white/5 bg-black/10 backdrop-blur-md">
+                                <div className="flex items-start gap-3">
+                                    <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${status.dot} shadow-sm`}></div>
+                                    <div className="flex-1 overflow-hidden">
+                                        <div className={`text-xs font-medium ${status.textClass}`}>{status.label}</div>
+                                        <div className="text-[10px] text-gray-500 truncate mt-0.5 leading-tight opacity-70" title={status.sub}>
+                                            {status.sub}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -495,14 +579,6 @@
                                             </div>
                                             <Toggle active={settings.sound_feedback} onClick={() => updateSetting('sound_feedback', !settings.sound_feedback)} />
                                         </div>
-                                        
-                                        <div className="p-6 bg-gradient-to-br from-indigo-900/30 to-purple-900/30 rounded-xl border border-indigo-500/30 flex flex-col items-center justify-center text-center space-y-4">
-                                            <h3 className="text-lg font-medium text-white">Test the Experience</h3>
-                                            <p className="text-sm text-gray-400">Click below to trigger the overlay manually (3 seconds).</p>
-                                            <button onClick={simulate} className="px-6 py-3 rounded-lg bg-white text-black font-medium hover:bg-gray-100 transition-colors flex items-center gap-2">
-                                                <Icons.Play size={16} /> Simulate Recording
-                                            </button>
-                                        </div>
                                     </section>
                                 </div>
                             )}
@@ -526,17 +602,33 @@
                                                 />
                                             </div>
                                         </div>
+                                        
                                         <div>
-                                            <label className="block text-sm font-medium mb-2">Model</label>
+                                            <label className="block text-sm font-medium mb-2">Audio Input Model (Transcription)</label>
+                                            <select 
+                                                value={settings.transcription_model}
+                                                onChange={(e) => updateSetting('transcription_model', e.target.value)}
+                                                className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300"
+                                            >
+                                                {AUDIO_MODELS.map(m => (
+                                                    <option key={m.id} value={m.id}>{m.label}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2">Refinement Model (Post-Processing)</label>
                                             <select 
                                                 value={settings.model}
                                                 onChange={(e) => updateSetting('model', e.target.value)}
                                                 className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300"
                                             >
-                                                <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
-                                                <option value="gpt-4o">GPT-4o (Smart)</option>
+                                                {REFINEMENT_MODELS.map(m => (
+                                                    <option key={m.id} value={m.id}>{m.label}</option>
+                                                ))}
                                             </select>
                                         </div>
+
                                         <div>
                                             <label className="block text-sm font-medium mb-2">System Prompt</label>
                                             <textarea 
@@ -691,7 +783,8 @@
                     );
                 }
 
-                return <Dashboard bridge={bridge} />;
+                // Pass overlayState to Dashboard for status footer
+                return <Dashboard bridge={bridge} overlayState={overlayState} />;
             }
 
             const root = ReactDOM.createRoot(document.getElementById('root'));
