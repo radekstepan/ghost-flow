@@ -63,3 +63,5 @@ coverage.xml
 *.wav
 ghost_voice.wav
 debug.log
+
+repomix-output.xml

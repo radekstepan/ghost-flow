@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost Flow</title>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PyQt WebChannel (Local File) -->
+    <script src="qwebchannel.js"></script>
+
+    <style>
+        /* Transparent base for Glassmorphism */
+        html, body {
+            background-color: transparent;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        
+        /* Custom Scrollbar */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1);
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Animations */
+        @keyframes waveform {
+            0%, 100% { height: 4px; }
+            50% { height: 16px; }
+        }
+        .animate-wave {
+            animation: waveform 1s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+    <div id="root" class="h-full w-full">
+        <!-- Loader fallback -->
+        <div class="flex h-full items-center justify-center text-gray-500 text-xs font-mono">
+            Initializing Interface...
+        </div>
+    </div>
+
+    <script type="text/babel">
+        try {
+            const { useState, useEffect, useRef } = React;
+
+            // --- ICONS ---
+            const Icons = {
+                Mic: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                ),
+                Settings: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.39a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                ),
+                Keyboard: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><line x1="6" y1="8" x2="6" y2="8"/><line x1="10" y1="8" x2="10" y2="8"/><line x1="14" y1="8" x2="14" y2="8"/><line x1="18" y1="8" x2="18" y2="8"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="12" x2="14" y2="12"/><line x1="18" y1="12" x2="18" y2="12"/><line x1="6" y1="16" x2="6" y2="16"/><line x1="10" y1="16" x2="15" y2="16"/></svg>
+                ),
+                Cpu: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+                ),
+                Activity: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                ),
+                Check: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"/></svg>
+                ),
+                Play: ({size=18, className=""}) => (
+                     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                ),
+                Copy: ({size=18, className=""}) => (
+                    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                )
+            };
+
+            // --- OVERLAY WIDGET ---
+            function OverlayWidget({ stage, text }) {
+                const isProcessing = stage === 'processing';
+                const isDone = stage === 'done';
+                const isListening = stage === 'listening';
+
+                if (stage === 'idle') return null;
+
+                return (
+                    <div className={`
+                        flex items-center gap-4 px-5 py-3 rounded-full shadow-2xl backdrop-blur-md border 
+                        transition-all duration-500 transform
+                        ${isDone ? 'bg-green-500/20 border-green-500/30' : 'bg-black/80 border-white/10'}
+                    `}>
+                        <div className="relative flex items-center justify-center w-8 h-8">
+                            {!isDone ? (
+                                <>
+                                    {isListening && (
+                                        <div className="flex items-center gap-1 h-5">
+                                            <div className="w-1 bg-indigo-500 rounded-full animate-wave" style={{animationDelay: '0ms'}}></div>
+                                            <div className="w-1 bg-purple-500 rounded-full animate-wave" style={{animationDelay: '100ms'}}></div>
+                                            <div className="w-1 bg-pink-500 rounded-full animate-wave" style={{animationDelay: '200ms'}}></div>
+                                            <div className="w-1 bg-indigo-500 rounded-full animate-wave" style={{animationDelay: '300ms'}}></div>
+                                        </div>
+                                    )}
+                                    {isProcessing && (
+                                        <Icons.Cpu size={24} className="text-indigo-400 animate-spin" />
+                                    )}
+                                </>
+                            ) : (
+                                <Icons.Check size={24} className="text-green-400" />
+                            )}
+                        </div>
+
+                        <div className="flex flex-col min-w-[140px]">
+                            <span className={`text-xs font-bold uppercase tracking-wider mb-0.5 ${isDone ? 'text-green-400' : 'text-gray-500'}`}>
+                                {stage === 'listening' && 'Listening...'}
+                                {stage === 'processing' && 'Refining...'}
+                                {stage === 'done' && 'Pasted'}
+                            </span>
+                            
+                            {stage === 'listening' && (
+                                <div className="h-4 w-32 bg-white/10 rounded animate-pulse"></div>
+                            )}
+                            {stage === 'processing' && (
+                                <span className="text-sm text-gray-300">Ghost Flow is thinking...</span>
+                            )}
+                            {stage === 'done' && (
+                                <span className="text-sm text-white font-medium">{text && text.length > 20 ? text.substring(0, 20) + '...' : text}</span>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- DASHBOARD ---
+            function Dashboard({ bridge }) {
+                const [activeTab, setActiveTab] = useState('general');
+                const [settings, setSettings] = useState({
+                    openai_api_key: '',
+                    model: 'gpt-4o-mini',
+                    system_prompt: '',
+                    sound_feedback: true
+                });
+
+                useEffect(() => {
+                    if(bridge) bridge.request_settings();
+                }, [bridge]);
+
+                useEffect(() => {
+                    if(!bridge) return;
+                    bridge.settings_loaded.connect((jsonStr) => {
+                        setSettings(JSON.parse(jsonStr));
+                    });
+                }, [bridge]);
+
+                const updateSetting = (key, value) => {
+                    const newSettings = { ...settings, [key]: value };
+                    setSettings(newSettings);
+                    if(bridge) bridge.save_settings(JSON.stringify(newSettings));
+                };
+
+                const simulate = () => {
+                    if(bridge) bridge.simulate_recording();
+                };
+
+                return (
+                    <div className="relative flex h-screen w-full bg-neutral-900 text-gray-100 font-sans selection:bg-indigo-500/30 overflow-hidden">
+                        
+                        {/* Background Ambience (Restored from index.html) */}
+                        <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0 opacity-20 pointer-events-none">
+                            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600 rounded-full blur-3xl filter mix-blend-screen animate-pulse"></div>
+                            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600 rounded-full blur-3xl filter mix-blend-screen animate-pulse" style={{animationDelay: "2s"}}></div>
+                        </div>
+
+                        {/* Sidebar */}
+                        <div className="relative z-10 w-64 bg-black/20 border-r border-white/5 flex flex-col justify-between backdrop-blur-sm">
+                            <div>
+                                <div className="flex items-center gap-3 px-6 py-6 mb-2">
+                                    <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                                        <Icons.Mic size={18} className="text-white" />
+                                    </div>
+                                    <span className="font-bold text-lg tracking-tight">Ghost Flow</span>
+                                </div>
+
+                                <nav className="space-y-1 px-2">
+                                    <NavItem icon={<Icons.Settings size={18} />} label="General" active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
+                                    <NavItem icon={<Icons.Keyboard size={18} />} label="Shortcuts" active={activeTab === 'shortcuts'} onClick={() => setActiveTab('shortcuts')} />
+                                    <NavItem icon={<Icons.Cpu size={18} />} label="Models" active={activeTab === 'models'} onClick={() => setActiveTab('models')} />
+                                    <NavItem icon={<Icons.Activity size={18} />} label="History" active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
+                                </nav>
+                            </div>
+
+                            <div className="px-6 py-4 border-t border-white/5">
+                                <div className="flex items-center gap-3 text-xs text-gray-500">
+                                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                    <span>System: Online</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="relative z-10 flex-1 p-10 overflow-y-auto custom-scrollbar bg-neutral-800/50">
+                            {activeTab === 'general' && (
+                                <div className="space-y-8 max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <header>
+                                        <h1 className="text-2xl font-bold mb-1">General Settings</h1>
+                                        <p className="text-gray-400 text-sm">Configure how Ghost Flow listens and behaves.</p>
+                                    </header>
+
+                                    <section className="space-y-4">
+                                        <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                            <div className="space-y-1">
+                                                <h3 className="font-medium">Sound Feedback</h3>
+                                                <p className="text-xs text-gray-400">Play a subtle sound when recording starts/stops.</p>
+                                            </div>
+                                            <Toggle active={settings.sound_feedback} onClick={() => updateSetting('sound_feedback', !settings.sound_feedback)} />
+                                        </div>
+                                        
+                                        <div className="p-6 bg-gradient-to-br from-indigo-900/30 to-purple-900/30 rounded-xl border border-indigo-500/30 flex flex-col items-center justify-center text-center space-y-4">
+                                            <h3 className="text-lg font-medium text-white">Test the Experience</h3>
+                                            <p className="text-sm text-gray-400">Click below to trigger the overlay.</p>
+                                            <button onClick={simulate} className="px-6 py-3 rounded-lg bg-white text-black font-medium hover:bg-gray-100 transition-colors flex items-center gap-2">
+                                                <Icons.Play size={16} /> Simulate Recording
+                                            </button>
+                                        </div>
+                                    </section>
+                                </div>
+                            )}
+
+                            {activeTab === 'models' && (
+                                <div className="space-y-8 max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <header>
+                                        <h1 className="text-2xl font-bold mb-1">Models & API</h1>
+                                        <p className="text-gray-400 text-sm">Connect your brains and ears.</p>
+                                    </header>
+                                    <section className="space-y-6">
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2">OpenAI API Key</label>
+                                            <div className="relative">
+                                                <input 
+                                                    type="password" 
+                                                    value={settings.openai_api_key} 
+                                                    onChange={(e) => updateSetting('openai_api_key', e.target.value)}
+                                                    placeholder="sk-proj-..."
+                                                    className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2">Model</label>
+                                            <select 
+                                                value={settings.model}
+                                                onChange={(e) => updateSetting('model', e.target.value)}
+                                                className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300"
+                                            >
+                                                <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
+                                                <option value="gpt-4o">GPT-4o (Smart)</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium mb-2">System Prompt</label>
+                                            <textarea 
+                                                value={settings.system_prompt}
+                                                onChange={(e) => updateSetting('system_prompt', e.target.value)}
+                                                className="w-full h-32 bg-neutral-900 border border-white/10 rounded-lg p-4 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono resize-none leading-relaxed"
+                                            />
+                                        </div>
+                                    </section>
+                                </div>
+                            )}
+                            
+                            {activeTab === 'shortcuts' && (
+                                <div className="space-y-8 max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <header>
+                                        <h1 className="text-2xl font-bold mb-1">Keyboard Shortcuts</h1>
+                                        <p className="text-gray-400 text-sm">Customize your global trigger key.</p>
+                                    </header>
+                                    <div className="p-6 bg-white/5 rounded-xl border border-white/5">
+                                        <label className="block text-sm font-medium mb-4">Global Trigger</label>
+                                        <div className="flex items-center gap-4">
+                                            <div className="h-14 flex-1 bg-neutral-900 rounded-lg border border-white/10 flex items-center px-4 justify-between group">
+                                                <span className="text-gray-400">Press combination...</span>
+                                                <kbd className="px-2 py-1 bg-white/10 rounded text-xs font-mono text-gray-300 border border-white/10 shadow-sm min-w-[24px] text-center">F8</kbd>
+                                            </div>
+                                            <button className="h-14 px-6 rounded-lg bg-white/5 border border-white/10 text-sm font-medium text-gray-400 cursor-not-allowed">Reset</button>
+                                        </div>
+                                        <p className="mt-3 text-xs text-gray-500">Hold this key to start recording. Release to process and paste.</p>
+                                    </div>
+                                </div>
+                            )}
+                            {activeTab === 'history' && (
+                                <div className="space-y-8 max-w-2xl animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                    <header>
+                                        <h1 className="text-2xl font-bold mb-1">History</h1>
+                                        <p className="text-gray-400 text-sm">Recent transcriptions.</p>
+                                    </header>
+                                    <div className="text-sm text-gray-500 italic p-4 border border-white/5 rounded-xl border-dashed text-center">
+                                        History storage coming in v1.2
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            function NavItem({ icon, label, active, onClick }) {
+                return (
+                    <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${active ? 'bg-white/10 text-white shadow-lg shadow-black/20' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                        <div className={`${active ? 'text-indigo-400' : 'text-gray-500'}`}>{icon}</div>{label}
+                    </button>
+                );
+            }
+
+            function Toggle({ active, onClick }) {
+                return (
+                    <div onClick={onClick} className={`w-11 h-6 rounded-full p-1 transition-colors cursor-pointer ${active ? 'bg-indigo-600' : 'bg-gray-700'}`}>
+                        <div className={`w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform ${active ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                    </div>
+                );
+            }
+
+            // --- ROOT APP ---
+            function App() {
+                const [viewMode, setViewMode] = useState('settings');
+                const [overlayState, setOverlayState] = useState({ stage: 'idle', text: '' });
+                const [bridge, setBridge] = useState(null);
+
+                useEffect(() => {
+                    if (window.qt && window.qt.webChannelTransport) {
+                        try {
+                            new QWebChannel(window.qt.webChannelTransport, (channel) => {
+                                const pyBridge = channel.objects.pyBridge;
+                                setBridge(pyBridge);
+                                
+                                pyBridge.overlay_update.connect((jsonStr) => {
+                                    const data = JSON.parse(jsonStr);
+                                    setOverlayState(data);
+                                });
+                            });
+                        } catch(e) {
+                            console.error("QWebChannel Error:", e);
+                        }
+                    } else {
+                        console.log("Qt WebChannel not found.");
+                    }
+
+                    const mode = window.location.hash.replace('#', '');
+                    if (mode === 'overlay') setViewMode('overlay');
+                }, []);
+
+                if (viewMode === 'overlay') {
+                    return (
+                        <div className="flex items-center justify-center w-screen h-screen">
+                            <OverlayWidget stage={overlayState.stage} text={overlayState.text} />
+                        </div>
+                    );
+                }
+
+                return <Dashboard bridge={bridge} />;
+            }
+
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+
+        } catch (error) {
+            console.error("React Crash:", error);
+            document.getElementById('root').innerHTML = "<div style='color:red; padding:20px'>Critical UI Error: " + error.message + "</div>";
+        }
+    </script>
+</body>
+</html>
