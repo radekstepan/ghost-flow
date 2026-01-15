@@ -2,6 +2,8 @@ import sys
 import json
 import pyautogui
 import pyperclip
+import ctypes
+from ctypes import util
 from pynput import keyboard
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QIcon
@@ -25,14 +27,23 @@ class TranscriptionWorker(QThread):
         self.processor = AIProcessor()
 
     def run(self):
+        print("DEBUG: TranscriptionWorker started")
         try:
+            if not current_config.openai_api_key:
+                raise ValueError("No OpenAI API Key set.")
+
             raw_text = self.processor.transcribe(self.audio_path)
-            if not raw_text.strip():
+            print(f"DEBUG: Raw Transcribe Result: '{raw_text}'")
+            
+            if not raw_text or not raw_text.strip():
                 self.error.emit("No speech detected.")
                 return
+            
             clean_text = self.processor.refine(raw_text)
+            print(f"DEBUG: Refined Text: '{clean_text}'")
             self.finished.emit(clean_text)
         except Exception as e:
+            print(f"DEBUG: TranscriptionWorker Error: {e}")
             self.error.emit(str(e))
 
 class GhostApp(QObject):
@@ -42,6 +53,10 @@ class GhostApp(QObject):
     def __init__(self, app):
         super().__init__()
         self.app = app
+        
+        # Check macOS Accessibility Permissions explicitly
+        self.permissions_granted = self.check_permissions()
+        print(f"DEBUG: Accessibility Permissions Granted: {self.permissions_granted}")
         
         # Core
         self.recorder = AudioRecorder()
@@ -74,6 +89,29 @@ class GhostApp(QObject):
         self.listener.start()
         self.hotkey_pressed = False
 
+    def check_permissions(self):
+        """Checks if the process is trusted by macOS Accessibility."""
+        if sys.platform != 'darwin':
+            return True
+        try:
+            # Try to load ApplicationServices
+            path = util.find_library('ApplicationServices')
+            if not path:
+                path = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+            
+            lib = ctypes.cdll.LoadLibrary(path)
+            
+            # AXIsProcessTrusted returns a boolean (true/false)
+            lib.AXIsProcessTrusted.argtypes = []
+            lib.AXIsProcessTrusted.restype = ctypes.c_bool
+            
+            is_trusted = lib.AXIsProcessTrusted()
+            return is_trusted
+
+        except Exception as e:
+            print(f"Warning: Could not check accessibility permissions: {e}")
+            return False
+
     def setup_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon.fromTheme("audio-input-microphone"))
@@ -91,7 +129,8 @@ class GhostApp(QObject):
         self.tray_icon.show()
 
     def quit_app(self):
-        self.listener.stop()
+        if self.listener:
+            self.listener.stop()
         self.app.quit()
 
     # --- Interaction ---
@@ -112,28 +151,37 @@ class GhostApp(QObject):
     @pyqtSlot()
     def on_start_recording(self):
         if self.processing: return
-        print("Starting recording...")
+        print("DEBUG: Starting recording...")
         
-        # Show Overlay
+        # Show Overlay and bring to front
         self.overlay_window.show()
+        self.overlay_window.raise_()
+        self.overlay_window.activateWindow()
+        
         self._update_overlay("listening", "")
         
         try:
-            if current_config.sound_feedback:
-                # Play sound here if implemented
-                pass
             self.recorder.start()
         except Exception as e:
             print(f"Recorder Error: {e}")
+            self._update_overlay("done", "Mic Error")
 
     @pyqtSlot()
     def on_stop_recording(self):
-        print("Stopping recording...")
+        print("DEBUG: Stopping recording...")
         self.processing = True
-        audio_path = self.recorder.stop()
+        
+        try:
+            audio_path = self.recorder.stop()
+        except Exception as e:
+            print(f"Recorder Stop Error: {e}")
+            self.reset_ui()
+            return
         
         if not audio_path:
-            self.reset_ui()
+            print("DEBUG: No audio recorded (silent or empty).")
+            self._update_overlay("done", "No Audio")
+            QTimer.singleShot(1500, self.reset_ui)
             return
 
         self._update_overlay("processing", "")
@@ -145,7 +193,7 @@ class GhostApp(QObject):
 
     @pyqtSlot(str)
     def on_ai_success(self, text):
-        print(f"Result: {text}")
+        print(f"DEBUG: Success Result: {text}")
         self._update_overlay("done", text)
         
         # Copy & Paste
@@ -155,13 +203,20 @@ class GhostApp(QObject):
         QTimer.singleShot(100, lambda: pyautogui.hotkey('command', 'v'))
         
         # Hide after 2 seconds
-        QTimer.singleShot(2000, self.reset_ui)
+        QTimer.singleShot(2500, self.reset_ui)
 
     @pyqtSlot(str)
     def on_ai_error(self, msg):
-        print(f"AI Error: {msg}")
-        self._update_overlay("done", "Error") # Or error state
-        QTimer.singleShot(1500, self.reset_ui)
+        print(f"DEBUG: AI Error Signal Received: {msg}")
+        # Strip generic python error text to keep overlay clean if possible
+        display_msg = "Error"
+        if "API Key" in msg:
+            display_msg = "No API Key"
+        elif "No speech" in msg:
+            display_msg = "No Speech"
+            
+        self._update_overlay("done", display_msg)
+        QTimer.singleShot(2000, self.reset_ui)
 
     def reset_ui(self):
         self.overlay_window.hide()
@@ -169,8 +224,9 @@ class GhostApp(QObject):
         self.processing = False
 
     def _update_overlay(self, stage, text):
+        print(f"DEBUG: _update_overlay called with stage={stage}, text={text}")
         data = json.dumps({"stage": stage, "text": text})
-        self.bridge.overlay_update.emit(data)
+        self.bridge.emit_overlay_update(data)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
