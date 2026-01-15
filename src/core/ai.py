@@ -15,10 +15,6 @@ class AIProcessor:
         client = self._get_client()
         
         # OpenAI's audio endpoint is strict about model names.
-        # We enforce whisper-1 here to prevent 404/400 errors if the user/config
-        # has a model string that isn't supported by the audio endpoint (e.g. gpt-4o).
-        # We only check if the user provided one is explicitly NOT whisper.
-        
         model_to_use = current_config.transcription_model
         if "whisper" not in model_to_use.lower():
             print(f"DEBUG: Configured model '{model_to_use}' not compatible with audio endpoint. Falling back to 'whisper-1'.")
@@ -46,25 +42,37 @@ class AIProcessor:
             {"role": "user", "content": raw_text}
         ]
         
-        # Some newer "reasoning" models (like o1, or future gpt-5-nano variants) 
-        # do not support the 'temperature' parameter, or require it to be default (1).
-        # We try with precision (0.3) first, and fallback if rejected.
+        # Optimization: Check if this model is known to reject temperature
+        # to avoid the roundtrip error.
+        use_temp = True
+        if current_config.model in current_config.reasoning_models:
+            print(f"DEBUG: Model '{current_config.model}' known to not support temperature. Skipping param.")
+            use_temp = False
+
         try:
-            response = client.chat.completions.create(
-                model=current_config.model,
-                messages=messages,
-                temperature=0.3
-            )
+            kwargs = {
+                "model": current_config.model,
+                "messages": messages
+            }
+            if use_temp:
+                kwargs["temperature"] = 0.3
+
+            response = client.chat.completions.create(**kwargs)
+
         except Exception as e:
-            # Check for the specific error about unsupported parameter/value
             err_str = str(e).lower()
-            if "temperature" in err_str and ("support" in err_str or "parameter" in err_str):
-                print(f"DEBUG: Model '{current_config.model}' rejected temperature param. Retrying with defaults.")
-                response = client.chat.completions.create(
-                    model=current_config.model,
-                    messages=messages
-                    # Omit temperature to use model default (usually 1.0)
-                )
+            # If we tried to use temperature and failed, record it and retry
+            if use_temp and "temperature" in err_str and ("support" in err_str or "parameter" in err_str):
+                print(f"DEBUG: Model '{current_config.model}' rejected temperature. Adding to exclusion list and retrying.")
+                
+                # Update config memory and disk
+                if current_config.model not in current_config.reasoning_models:
+                    current_config.reasoning_models.append(current_config.model)
+                    current_config.save()
+                
+                # Retry without temperature
+                del kwargs["temperature"]
+                response = client.chat.completions.create(**kwargs)
             else:
                 raise e
 

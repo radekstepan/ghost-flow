@@ -1,6 +1,7 @@
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from typing import List
 
 CONFIG_FILE = os.path.expanduser("~/.ghostflow_config.json")
 
@@ -19,6 +20,12 @@ class Config:
     hotkey: str = "Key.f8"
     sound_feedback: bool = True
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    
+    # UI Customization
+    overlay_position: str = "top-right" # top-right, top-left, bottom-right, bottom-left, center, bottom-center, top-center
+    
+    # Cache for models that don't support temperature (to avoid 400 errors/roundtrips)
+    reasoning_models: List[str] = field(default_factory=list)
 
     def save(self):
         try:
@@ -44,7 +51,7 @@ class Config:
                 
                 config = Config(**filtered_data)
                 
-                # Restore default prompt if empty (fixes "Garbage" output issue)
+                # Restore default prompt if empty
                 if not config.system_prompt or not config.system_prompt.strip():
                     print("DEBUG: Empty system prompt detected. Restoring default.")
                     config.system_prompt = DEFAULT_SYSTEM_PROMPT

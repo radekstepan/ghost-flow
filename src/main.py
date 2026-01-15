@@ -4,6 +4,7 @@ import time
 import pyautogui
 import pyperclip
 import ctypes
+import subprocess
 from ctypes import util
 from pynput import keyboard
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
@@ -76,12 +77,11 @@ class GhostApp(QObject):
         self.main_window.show()
         
         # 2. Overlay Window (Hidden initially)
-        self.overlay_window = WebWindow(self.bridge, mode="overlay", width=400, height=200)
-        # Center the overlay manually (roughly)
-        screen = self.main_window.screen().geometry()
-        ox = (screen.width() - 400) // 2
-        oy = (screen.height() // 2) - 200
-        self.overlay_window.move(ox, oy)
+        # Reduced height for a tighter fit
+        self.overlay_window = WebWindow(self.bridge, mode="overlay", width=340, height=80)
+        
+        # Initial positioning
+        self.reposition_overlay()
         
         # System Tray
         self.setup_tray()
@@ -138,6 +138,69 @@ class GhostApp(QObject):
         if self.listener:
             self.listener.stop()
         self.app.quit()
+        
+    def reposition_overlay(self):
+        """Calculates overlay position based on config."""
+        pos = current_config.overlay_position
+        screen_geo = self.main_window.screen().availableGeometry()
+        
+        # Margins
+        mx = 24
+        my = 40 # Top bar allowance
+        
+        w = self.overlay_window.width()
+        h = self.overlay_window.height()
+        
+        x, y = 0, 0
+        
+        if pos == "top-right":
+            x = screen_geo.x() + screen_geo.width() - w - mx
+            y = screen_geo.y() + my
+        elif pos == "top-left":
+            x = screen_geo.x() + mx
+            y = screen_geo.y() + my
+        elif pos == "bottom-right":
+            x = screen_geo.x() + screen_geo.width() - w - mx
+            y = screen_geo.y() + screen_geo.height() - h - mx
+        elif pos == "bottom-left":
+            x = screen_geo.x() + mx
+            y = screen_geo.y() + screen_geo.height() - h - mx
+        elif pos == "center":
+            x = screen_geo.x() + (screen_geo.width() - w) // 2
+            y = screen_geo.y() + (screen_geo.height() - h) // 2
+        elif pos == "top-center":
+            x = screen_geo.x() + (screen_geo.width() - w) // 2
+            y = screen_geo.y() + my
+        elif pos == "bottom-center":
+            x = screen_geo.x() + (screen_geo.width() - w) // 2
+            y = screen_geo.y() + screen_geo.height() - h - mx
+        else:
+            # Default top-right
+            x = screen_geo.x() + screen_geo.width() - w - mx
+            y = screen_geo.y() + my
+            
+        self.overlay_window.move(int(x), int(y))
+
+    def play_sound(self, sound_name):
+        """Plays a system sound on macOS using afplay (non-blocking)."""
+        if not current_config.sound_feedback:
+            return
+        
+        # Map nice abstract names to actual macOS system sounds
+        # System sounds usually in /System/Library/Sounds/
+        sound_map = {
+            "start": "/System/Library/Sounds/Tink.aiff",
+            "stop": "/System/Library/Sounds/Pop.aiff",
+            "error": "/System/Library/Sounds/Basso.aiff",
+            "success": "/System/Library/Sounds/Glass.aiff"
+        }
+        
+        path = sound_map.get(sound_name)
+        if path:
+            try:
+                subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                print(f"DEBUG: Failed to play sound {sound_name}: {e}")
 
     def get_configured_key(self):
         """Resolves the configured hotkey string to a pynput Key object."""
@@ -198,6 +261,10 @@ class GhostApp(QObject):
         if self.recorder.is_recording: return
         
         print("DEBUG: Starting recording...")
+        self.play_sound("start")
+        
+        # Ensure position is correct (in case config changed)
+        self.reposition_overlay()
         
         # Show Overlay using specialized method to prevent focus stealing
         self.overlay_window.show_overlay()
@@ -216,6 +283,7 @@ class GhostApp(QObject):
         if not self.recorder.is_recording: return
 
         print("DEBUG: Stopping recording...")
+        self.play_sound("stop")
         self.processing = True
         
         try:
@@ -259,6 +327,7 @@ class GhostApp(QObject):
     @pyqtSlot(str)
     def on_ai_error(self, msg):
         print(f"DEBUG: AI Error Signal Received: {msg}")
+        self.play_sound("error")
         # Strip generic python error text to keep overlay clean if possible
         display_msg = "Error"
         if "API Key" in msg:
