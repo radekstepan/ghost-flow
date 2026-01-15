@@ -293,7 +293,8 @@
 
             // --- CONSTANTS ---
             const AUDIO_MODELS = [
-                { id: 'whisper-1', label: 'Whisper-1 (Standard)' }
+                { id: 'whisper-1', label: 'Whisper-1 (Standard)' },
+                { id: 'gpt-4o-mini-transcribe-2025-12-15', label: 'GPT-4o Mini Transcribe (Realtime)' }
             ];
 
             const REFINEMENT_MODELS = [
@@ -301,6 +302,8 @@
                 { id: 'gpt-4o-mini', label: 'GPT-4o Mini (Standard)' },
                 { id: 'gpt-4o', label: 'GPT-4o (High Intelligence)' }
             ];
+
+            const isWhisperModel = (modelId) => (modelId || '').toLowerCase().includes('whisper');
 
             const OVERLAY_POSITIONS = [
                 { id: 'top-right', label: 'Top Right' },
@@ -758,27 +761,35 @@
                                             </select>
                                         </div>
 
-                                        <div>
-                                            <label className="block text-sm font-medium mb-2">Refinement Model (Post-Processing)</label>
-                                            <select 
-                                                value={settings.model}
-                                                onChange={(e) => updateSetting('model', e.target.value)}
-                                                className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300"
-                                            >
-                                                {REFINEMENT_MODELS.map(m => (
-                                                    <option key={m.id} value={m.id}>{m.label}</option>
-                                                ))}
-                                            </select>
-                                        </div>
+                                        {isWhisperModel(settings.transcription_model) ? (
+                                            <>
+                                                <div>
+                                                    <label className="block text-sm font-medium mb-2">Refinement Model (Post-Processing)</label>
+                                                    <select 
+                                                        value={settings.model}
+                                                        onChange={(e) => updateSetting('model', e.target.value)}
+                                                        className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300"
+                                                    >
+                                                        {REFINEMENT_MODELS.map(m => (
+                                                            <option key={m.id} value={m.id}>{m.label}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
 
-                                        <div>
-                                            <label className="block text-sm font-medium mb-2">System Prompt</label>
-                                            <textarea 
-                                                value={settings.system_prompt}
-                                                onChange={(e) => updateSetting('system_prompt', e.target.value)}
-                                                className="w-full h-32 bg-neutral-900 border border-white/10 rounded-lg p-4 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono resize-none leading-relaxed"
-                                            />
-                                        </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium mb-2">System Prompt</label>
+                                                    <textarea 
+                                                        value={settings.system_prompt}
+                                                        onChange={(e) => updateSetting('system_prompt', e.target.value)}
+                                                        className="w-full h-32 bg-neutral-900 border border-white/10 rounded-lg p-4 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono resize-none leading-relaxed"
+                                                    />
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="text-xs text-gray-500 bg-black/20 border border-white/5 rounded-lg p-3">
+                                                Realtime transcription models return final text directly and skip post-processing.
+                                            </div>
+                                        )}
                                     </section>
                                 </div>
                             )}

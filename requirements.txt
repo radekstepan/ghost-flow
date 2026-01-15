@@ -5,6 +5,7 @@ sounddevice
 numpy
 scipy
 openai
+websocket-client
 pyperclip
 pyautogui
 python-dotenv

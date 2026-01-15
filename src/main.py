@@ -14,7 +14,7 @@ from PyQt6.QtCore import pyqtSlot, QThread, QTimer, Qt, QObject, pyqtSignal, QSi
 
 from src.config import current_config
 from src.core.recorder import AudioRecorder
-from src.core.ai import AIProcessor
+from src.core.ai import AIProcessor, is_whisper_model
 from src.core.history import HistoryManager
 
 # New GUI components
@@ -48,9 +48,12 @@ class TranscriptionWorker(QThread):
             if not raw_text or not raw_text.strip():
                 self.error.emit("No speech detected.")
                 return
-            
-            clean_text = self.processor.refine(raw_text)
-            print(f"DEBUG: Refined Text: '{clean_text}'")
+
+            if is_whisper_model(current_config.transcription_model):
+                clean_text = self.processor.refine(raw_text)
+                print(f"DEBUG: Refined Text: '{clean_text}'")
+            else:
+                clean_text = raw_text
             self.finished.emit(clean_text)
         except Exception as e:
             print(f"DEBUG: TranscriptionWorker Error: {e}")
@@ -96,14 +99,9 @@ class StreamingTranscriptionWorker(QThread):
             self.error.emit(str(e))
             return
         if text and text.strip():
-            try:
-                refined = self.processor.refine(text.strip())
-            except Exception as e:
-                self._error_emitted = True
-                self.error.emit(str(e))
-                return
-            self._finalized_segments.append(refined.strip())
-            self.partial_update.emit(self._finalized_text(), refined.strip())
+            # Append raw segment text and emit immediate partial update.
+            self._finalized_segments.append(text.strip())
+            self.partial_update.emit(self._finalized_text(), text.strip())
 
     def run(self):
         print("DEBUG: StreamingTranscriptionWorker started")
@@ -165,12 +163,13 @@ class StreamingTranscriptionWorker(QThread):
 
         final_text = self._finalized_text()
         if final_text and final_text.strip():
-            try:
-                final_text = self.processor.refine(final_text.strip())
-            except Exception as e:
-                self._error_emitted = True
-                self.error.emit(str(e))
-                return
+            if is_whisper_model(current_config.transcription_model):
+                try:
+                    final_text = self.processor.refine(final_text.strip())
+                except Exception as e:
+                    self._error_emitted = True
+                    self.error.emit(str(e))
+                    return
 
         self.session_finished.emit(final_text)
 
