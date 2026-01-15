@@ -8,3 +8,5 @@ openai
 pyperclip
 pyautogui
 python-dotenv
+webrtcvad>=2.0.10
+setuptools

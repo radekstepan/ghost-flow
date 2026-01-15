@@ -1,4 +1,7 @@
 import os
+import tempfile
+import numpy as np
+import scipy.io.wavfile as wav
 from openai import OpenAI
 from src.config import current_config
 
@@ -77,3 +80,12 @@ class AIProcessor:
                 raise e
 
         return response.choices[0].message.content.strip()
+
+    def transcribe_pcm16(self, pcm_bytes: bytes, sample_rate: int) -> str:
+        """Transcribe raw PCM16 mono bytes via a temp WAV file."""
+        if not pcm_bytes:
+            return ""
+        audio_data = np.frombuffer(pcm_bytes, dtype=np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            wav.write(tmp.name, sample_rate, audio_data)
+            return self.transcribe(tmp.name)

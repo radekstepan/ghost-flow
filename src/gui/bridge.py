@@ -31,7 +31,7 @@ class UIBridge(QObject):
     def get_settings(self):
         """Called by React to fetch config synchronously (via callback)."""
         perms = getattr(self.app, 'permissions_granted', True)
-        print("DEBUG: Bridge get_settings called")
+        print(f"DEBUG: Bridge get_settings called (streaming_enabled={current_config.streaming_enabled}, vad_silence_ms={current_config.vad_silence_ms}, vad_aggressiveness={current_config.vad_aggressiveness})")
         
         data = {
             "openai_api_key": current_config.openai_api_key,
@@ -39,6 +39,10 @@ class UIBridge(QObject):
             "model": current_config.model,
             "system_prompt": current_config.system_prompt,
             "sound_feedback": current_config.sound_feedback,
+            "overlay_position": current_config.overlay_position,
+            "streaming_enabled": current_config.streaming_enabled,
+            "vad_silence_ms": current_config.vad_silence_ms,
+            "vad_aggressiveness": current_config.vad_aggressiveness,
             "permissions_granted": perms
         }
         return json.dumps(data)
@@ -63,7 +67,7 @@ class UIBridge(QObject):
             
             if changed:
                 current_config.save()
-                print("DEBUG: Settings saved via Bridge")
+                print(f"DEBUG: Settings saved via Bridge (streaming_enabled={current_config.streaming_enabled}, vad_silence_ms={current_config.vad_silence_ms}, vad_aggressiveness={current_config.vad_aggressiveness})")
                 
         except Exception as e:
             print(f"ERROR: Error saving settings in Bridge: {e}")

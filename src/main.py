@@ -1,6 +1,7 @@
 import sys
 import json
 import time
+import queue
 import pyautogui
 import pyperclip
 import ctypes
@@ -19,6 +20,12 @@ from src.core.history import HistoryManager
 # New GUI components
 from src.gui.bridge import UIBridge
 from src.gui.web_window import WebWindow
+
+try:
+    import webrtcvad
+except Exception as e:
+    print(f"WARNING: Failed to import webrtcvad: {e}")
+    webrtcvad = None
 
 class TranscriptionWorker(QThread):
     finished = pyqtSignal(str) 
@@ -49,6 +56,124 @@ class TranscriptionWorker(QThread):
             print(f"DEBUG: TranscriptionWorker Error: {e}")
             self.error.emit(str(e))
 
+class StreamingTranscriptionWorker(QThread):
+    partial_update = pyqtSignal(str, str)   # finalized_text, live_text
+    session_finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, frame_queue, sample_rate, vad_silence_ms=600, vad_aggressiveness=2, min_segment_ms=300):
+        super().__init__()
+        self.frame_queue = frame_queue
+        self.sample_rate = sample_rate
+        self.vad_silence_ms = vad_silence_ms
+        self.vad_aggressiveness = vad_aggressiveness
+        self.min_segment_ms = min_segment_ms
+        self._stop_requested = False
+        self._error_emitted = False
+        self.processor = AIProcessor()
+        self._finalized_segments = []
+
+    def request_stop(self):
+        self._stop_requested = True
+
+    def _finalized_text(self):
+        parts = [p.strip() for p in self._finalized_segments if p and p.strip()]
+        return " ".join(parts).strip()
+
+    def _frame_bytes(self, frame):
+        if hasattr(frame, "ndim") and frame.ndim > 1:
+            frame = frame[:, 0]
+        return frame.tobytes()
+
+    def _process_segment(self, frames_bytes, segment_ms):
+        if segment_ms < self.min_segment_ms:
+            return
+        pcm_bytes = b"".join(frames_bytes)
+        try:
+            text = self.processor.transcribe_pcm16(pcm_bytes, self.sample_rate)
+        except Exception as e:
+            self._error_emitted = True
+            self.error.emit(str(e))
+            return
+        if text and text.strip():
+            try:
+                refined = self.processor.refine(text.strip())
+            except Exception as e:
+                self._error_emitted = True
+                self.error.emit(str(e))
+                return
+            self._finalized_segments.append(refined.strip())
+            self.partial_update.emit(self._finalized_text(), refined.strip())
+
+    def run(self):
+        print("DEBUG: StreamingTranscriptionWorker started")
+        if webrtcvad is None:
+            self.error.emit("Streaming VAD not available.")
+            return
+
+        try:
+            vad = webrtcvad.Vad(self.vad_aggressiveness)
+        except Exception as e:
+            self.error.emit(str(e))
+            return
+
+        silence_ms = 0
+        current_frames = []
+        current_duration = 0
+        frame_ms = None
+        in_speech = False
+
+        while True:
+            if self._stop_requested and self.frame_queue.empty():
+                break
+            try:
+                frame = self.frame_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if frame is None:
+                continue
+            if frame_ms is None:
+                frame_ms = int(1000 * frame.shape[0] / self.sample_rate)
+
+            frame_bytes = self._frame_bytes(frame)
+            is_speech = vad.is_speech(frame_bytes, self.sample_rate)
+
+            if is_speech:
+                if not in_speech:
+                    print("DEBUG: VAD speech start")
+                    in_speech = True
+                current_frames.append(frame_bytes)
+                current_duration += frame_ms
+                silence_ms = 0
+            else:
+                if current_frames:
+                    silence_ms += frame_ms
+                    if silence_ms >= self.vad_silence_ms:
+                        print(f"DEBUG: VAD silence reached ({silence_ms}ms). Closing segment ({current_duration}ms).")
+                        self._process_segment(current_frames, current_duration)
+                        if self._error_emitted:
+                            return
+                        current_frames = []
+                        current_duration = 0
+                        silence_ms = 0
+                        in_speech = False
+
+        if current_frames:
+            self._process_segment(current_frames, current_duration)
+            if self._error_emitted:
+                return
+
+        final_text = self._finalized_text()
+        if final_text and final_text.strip():
+            try:
+                final_text = self.processor.refine(final_text.strip())
+            except Exception as e:
+                self._error_emitted = True
+                self.error.emit(str(e))
+                return
+
+        self.session_finished.emit(final_text)
+
 class GhostApp(QObject):
     start_rec_signal = pyqtSignal()
     stop_rec_signal = pyqtSignal()
@@ -64,6 +189,9 @@ class GhostApp(QObject):
         # Core
         self.recorder = AudioRecorder()
         self.processing = False
+        self.streaming_worker = None
+        self.streaming_queue = None
+        self.streaming_stop_requested = False
         
         # State for Hybrid Trigger (Hold for PTT, Tap for Toggle)
         self.recording_start_time = 0.0
@@ -346,8 +474,31 @@ class GhostApp(QObject):
         
         self._update_overlay("listening", "")
         
+        use_streaming = current_config.streaming_enabled
+        print(f"DEBUG: Streaming enabled={use_streaming}, vad_silence_ms={current_config.vad_silence_ms}, vad_aggressiveness={current_config.vad_aggressiveness}, webrtcvad_available={webrtcvad is not None}")
+        if use_streaming and webrtcvad is None:
+            print("WARNING: webrtcvad not available. Falling back to batch mode.")
+            use_streaming = False
+
         try:
-            self.recorder.start()
+            if use_streaming:
+                print("DEBUG: Starting in streaming mode")
+                self.streaming_stop_requested = False
+                self.streaming_queue = queue.Queue(maxsize=200)
+                self.streaming_worker = StreamingTranscriptionWorker(
+                    self.streaming_queue,
+                    self.recorder.sample_rate,
+                    vad_silence_ms=current_config.vad_silence_ms,
+                    vad_aggressiveness=current_config.vad_aggressiveness
+                )
+                self.streaming_worker.partial_update.connect(self.on_stream_partial)
+                self.streaming_worker.session_finished.connect(self.on_stream_final)
+                self.streaming_worker.error.connect(self.on_stream_error)
+                self.streaming_worker.start()
+                self.recorder.start_streaming(self.streaming_queue)
+            else:
+                print("DEBUG: Starting in batch mode")
+                self.recorder.start()
         except Exception as e:
             print(f"Recorder Error: {e}")
             self._update_overlay("done", "Mic Error")
@@ -361,6 +512,19 @@ class GhostApp(QObject):
         self.play_sound("stop")
         self.processing = True
         
+        if self.recorder.streaming:
+            try:
+                self.processing = True
+                self.streaming_stop_requested = True
+                self.recorder.stop_streaming()
+                if self.streaming_worker:
+                    self.streaming_worker.request_stop()
+                self._update_overlay("idle", "")
+            except Exception as e:
+                print(f"Recorder Stop Error: {e}")
+                self.reset_ui()
+            return
+
         try:
             audio_path = self.recorder.stop()
         except Exception as e:
@@ -413,15 +577,64 @@ class GhostApp(QObject):
         self._update_overlay("done", display_msg)
         QTimer.singleShot(2000, self.reset_ui)
 
+    @pyqtSlot(str, str)
+    def on_stream_partial(self, finalized_text, live_text):
+        if self.streaming_stop_requested:
+            return
+        payload_text = live_text or ""
+        if payload_text:
+            self._update_overlay("listening", payload_text, finalized=finalized_text, live=live_text)
+            paste_text = payload_text.strip()
+            if paste_text:
+                if not paste_text.endswith((" ", "\n", "\t")):
+                    paste_text += " "
+                pyperclip.copy(paste_text)
+                QTimer.singleShot(0, lambda: pyautogui.hotkey('command', 'v'))
+
+    @pyqtSlot(str)
+    def on_stream_final(self, final_text):
+        if not final_text or not final_text.strip():
+            self._update_overlay("done", "No Audio")
+            QTimer.singleShot(1500, self.reset_ui)
+            return
+
+        HistoryManager.add(final_text)
+        self._update_overlay("done", final_text)
+
+        pyperclip.copy(final_text)
+        QTimer.singleShot(2500, self.reset_ui)
+
+    @pyqtSlot(str)
+    def on_stream_error(self, msg):
+        print(f"DEBUG: Streaming Error Signal Received: {msg}")
+        if self.recorder.is_recording and self.recorder.streaming:
+            try:
+                self.recorder.stop_streaming()
+            except Exception:
+                pass
+        self.play_sound("error")
+        display_msg = "Error"
+        if "API Key" in msg:
+            display_msg = "No API Key"
+        elif "No speech" in msg:
+            display_msg = "No Speech"
+        self._update_overlay("done", display_msg)
+        QTimer.singleShot(2000, self.reset_ui)
+
     def reset_ui(self):
         self.overlay_window.hide()
         self._update_overlay("idle", "")
         self.processing = False
+        self.streaming_worker = None
+        self.streaming_queue = None
+        self.streaming_stop_requested = False
         # Note: self.recording_mode is managed by key listener thread to avoid races.
 
-    def _update_overlay(self, stage, text):
+    def _update_overlay(self, stage, text, **extra):
         print(f"DEBUG: _update_overlay called with stage={stage}, text={text}")
-        data = json.dumps({"stage": stage, "text": text})
+        payload = {"stage": stage, "text": text}
+        payload.update(extra)
+        data = json.dumps(payload)
         self.bridge.emit_overlay_update(data)
 
 if __name__ == "__main__":

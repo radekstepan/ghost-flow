@@ -23,6 +23,11 @@ class Config:
     
     # UI Customization
     overlay_position: str = "top-right" # top-right, top-left, bottom-right, bottom-left, center, bottom-center, top-center
+
+    # Streaming mode
+    streaming_enabled: bool = False
+    vad_silence_ms: int = 600
+    vad_aggressiveness: int = 2
     
     # Cache for models that don't support temperature (to avoid 400 errors/roundtrips)
     reasoning_models: List[str] = field(default_factory=list)
