@@ -4,19 +4,21 @@ from dataclasses import dataclass, asdict
 
 CONFIG_FILE = os.path.expanduser("~/.ghostflow_config.json")
 
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a precise dictation assistant. Your task is to correct the grammar, "
+    "punctuation, and capitalization of the user's raw transcript. "
+    "Remove filler words (um, uh, like). Do not change the meaning. "
+    "Do not add introductory text. Output only the refined text."
+)
+
 @dataclass
 class Config:
     openai_api_key: str = ""
-    transcription_model: str = "gpt-audio-mini-2025-12-15" 
-    model: str = "gpt-5-nano-2025-08-07"
+    transcription_model: str = "whisper-1" 
+    model: str = "gpt-4o-mini"
     hotkey: str = "Key.f8"
     sound_feedback: bool = True
-    system_prompt: str = (
-        "You are a precise dictation assistant. Your task is to correct the grammar, "
-        "punctuation, and capitalization of the user's raw transcript. "
-        "Remove filler words (um, uh, like). Do not change the meaning. "
-        "Do not add introductory text. Output only the refined text."
-    )
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
 
     def save(self):
         try:
@@ -37,11 +39,15 @@ class Config:
                     data = json.load(f)
                 
                 # Filter data to only include keys that exist in the Config dataclass
-                # and ensure we don't crash on unexpected keys
                 valid_keys = Config.__annotations__.keys()
                 filtered_data = {k: v for k, v in data.items() if k in valid_keys}
                 
                 config = Config(**filtered_data)
+                
+                # Restore default prompt if empty (fixes "Garbage" output issue)
+                if not config.system_prompt or not config.system_prompt.strip():
+                    print("DEBUG: Empty system prompt detected. Restoring default.")
+                    config.system_prompt = DEFAULT_SYSTEM_PROMPT
                 
                 # Debug print to verify API key load (masked)
                 key_status = "Found" if config.openai_api_key else "Empty"

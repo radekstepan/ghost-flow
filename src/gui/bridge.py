@@ -1,6 +1,7 @@
 import json
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 from src.config import current_config, Config
+from src.core.history import HistoryManager
 
 class UIBridge(QObject):
     """
@@ -10,8 +11,7 @@ class UIBridge(QObject):
     # Signals to send data to JS
     status_update = pyqtSignal(str)     # For general system status
     overlay_update = pyqtSignal(str)    # For overlay state {stage, text}
-    # settings_loaded signal removed in favor of direct return method
-
+    
     def __init__(self, app_instance):
         super().__init__()
         self.app = app_instance
@@ -67,6 +67,17 @@ class UIBridge(QObject):
                 
         except Exception as e:
             print(f"ERROR: Error saving settings in Bridge: {e}")
+
+    @pyqtSlot(result=str)
+    def get_history(self):
+        """Returns the history list as a JSON string."""
+        return json.dumps(HistoryManager.load())
+
+    @pyqtSlot()
+    def clear_history(self):
+        """Clears the history file."""
+        HistoryManager.clear()
+        print("DEBUG: History cleared via Bridge")
 
     @pyqtSlot()
     def simulate_recording(self):

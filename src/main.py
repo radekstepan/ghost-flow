@@ -1,5 +1,6 @@
 import sys
 import json
+import time
 import pyautogui
 import pyperclip
 import ctypes
@@ -12,6 +13,7 @@ from PyQt6.QtCore import pyqtSlot, QThread, QTimer, Qt, QObject, pyqtSignal
 from src.config import current_config
 from src.core.recorder import AudioRecorder
 from src.core.ai import AIProcessor
+from src.core.history import HistoryManager
 
 # New GUI components
 from src.gui.bridge import UIBridge
@@ -61,6 +63,10 @@ class GhostApp(QObject):
         # Core
         self.recorder = AudioRecorder()
         self.processing = False
+        
+        # State for Hybrid Trigger (Hold for PTT, Tap for Toggle)
+        self.recording_start_time = 0.0
+        self.recording_mode = None # None, 'evaluating', 'toggle'
         
         # Bridge & Windows
         self.bridge = UIBridge(self)
@@ -133,30 +139,68 @@ class GhostApp(QObject):
             self.listener.stop()
         self.app.quit()
 
+    def get_configured_key(self):
+        """Resolves the configured hotkey string to a pynput Key object."""
+        k = current_config.hotkey
+        try:
+            if k.startswith("Key."):
+                attr = k.split(".")[1]
+                return getattr(keyboard.Key, attr, keyboard.Key.f8)
+            # Handle single characters (e.g. 'r')
+            if len(k) == 1:
+                return keyboard.KeyCode.from_char(k)
+        except Exception:
+            pass
+        return keyboard.Key.f8
+
     # --- Interaction ---
     def on_key_press(self, key):
         if self.processing: return
-        if key == keyboard.Key.f8:
+        
+        target_key = self.get_configured_key()
+        if key == target_key:
             if not self.hotkey_pressed:
                 self.hotkey_pressed = True
-                self.start_rec_signal.emit()
+                
+                # Hybrid Trigger Logic
+                if self.recording_mode == 'toggle':
+                    # User tapped again to stop
+                    self.stop_rec_signal.emit()
+                    self.recording_mode = None
+                elif self.recording_mode is None:
+                    # Initial press -> Start
+                    self.recording_start_time = time.time()
+                    self.recording_mode = 'evaluating'
+                    self.start_rec_signal.emit()
 
     def on_key_release(self, key):
-        if key == keyboard.Key.f8:
-            if self.hotkey_pressed:
-                self.hotkey_pressed = False
-                self.stop_rec_signal.emit()
+        target_key = self.get_configured_key()
+        if key == target_key:
+            self.hotkey_pressed = False
+            
+            if self.recording_mode == 'evaluating':
+                # Check how long it was held
+                duration = time.time() - self.recording_start_time
+                if duration < 0.4: # 400ms threshold for Tap vs Hold
+                    print("DEBUG: Tap detected (<0.4s). Switching to TOGGLE mode.")
+                    self.recording_mode = 'toggle'
+                    # Do NOT stop recording; stay latched
+                else:
+                    print("DEBUG: Hold detected (>0.4s). Stopping (PTT).")
+                    self.stop_rec_signal.emit()
+                    self.recording_mode = None
 
     # --- Logic ---
     @pyqtSlot()
     def on_start_recording(self):
         if self.processing: return
+        # Prevent double-start if already recording
+        if self.recorder.is_recording: return
+        
         print("DEBUG: Starting recording...")
         
-        # Show Overlay and bring to front
-        self.overlay_window.show()
-        self.overlay_window.raise_()
-        self.overlay_window.activateWindow()
+        # Show Overlay using specialized method to prevent focus stealing
+        self.overlay_window.show_overlay()
         
         self._update_overlay("listening", "")
         
@@ -168,6 +212,9 @@ class GhostApp(QObject):
 
     @pyqtSlot()
     def on_stop_recording(self):
+        # Prevent stopping if not recording
+        if not self.recorder.is_recording: return
+
         print("DEBUG: Stopping recording...")
         self.processing = True
         
@@ -194,6 +241,10 @@ class GhostApp(QObject):
     @pyqtSlot(str)
     def on_ai_success(self, text):
         print(f"DEBUG: Success Result: {text}")
+        
+        # Save to History
+        HistoryManager.add(text)
+        
         self._update_overlay("done", text)
         
         # Copy & Paste
@@ -222,6 +273,7 @@ class GhostApp(QObject):
         self.overlay_window.hide()
         self._update_overlay("idle", "")
         self.processing = False
+        # Note: self.recording_mode is managed by key listener thread to avoid races.
 
     def _update_overlay(self, stage, text):
         print(f"DEBUG: _update_overlay called with stage={stage}, text={text}")

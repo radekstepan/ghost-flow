@@ -27,10 +27,16 @@ class WebWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         
         if mode == "overlay":
+            # STRONG Focus Prevention for macOS
+            # WA_ShowWithoutActivating must be set.
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            
+            # Using ToolTip type often prevents window manager from giving focus
             self.setWindowFlags(
                 Qt.WindowType.FramelessWindowHint | 
                 Qt.WindowType.WindowStaysOnTopHint | 
-                Qt.WindowType.Tool
+                Qt.WindowType.ToolTip | 
+                Qt.WindowType.WindowDoesNotAcceptFocus
             )
         else:
             # Main settings window
@@ -39,6 +45,10 @@ class WebWindow(QMainWindow):
         # Web Engine Setup
         self.webview = QWebEngineView(self)
         
+        # Ensure the webview itself doesn't try to grab focus
+        if mode == "overlay":
+            self.webview.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         # Use our custom page that captures logs
         self.page = WebPage(self.webview)
         self.webview.setPage(self.page)
@@ -47,7 +57,7 @@ class WebWindow(QMainWindow):
         self.webview.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.page.setBackgroundColor(Qt.GlobalColor.transparent)
         
-        # Developer settings (optional, helps with debugging)
+        # Developer settings
         settings = self.page.settings()
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
@@ -58,8 +68,6 @@ class WebWindow(QMainWindow):
         self.page.setWebChannel(self.channel)
 
         # Load Content
-        # We assume web_window.py is in src/gui/
-        # and app.html is in src/ui/
         html_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../ui/app.html"))
         
         if not os.path.exists(html_path):
@@ -68,8 +76,15 @@ class WebWindow(QMainWindow):
             print(f"Loading HTML: {html_path}")
 
         url = QUrl.fromLocalFile(html_path)
-        # We use a fragment to tell the React app which view to render (#settings or #overlay)
         url.setFragment(mode) 
         self.webview.load(url)
         
         self.setCentralWidget(self.webview)
+
+    def show_overlay(self):
+        """ Specialized show method for overlay to ensure no focus steal """
+        if self.mode == "overlay":
+            # show() normally activates. setVisible(True) with WA_ShowWithoutActivating is safer.
+            self.setVisible(True)
+        else:
+            self.show()
