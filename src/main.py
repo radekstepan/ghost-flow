@@ -8,8 +8,8 @@ import subprocess
 from ctypes import util
 from pynput import keyboard
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtCore import pyqtSlot, QThread, QTimer, Qt, QObject, pyqtSignal
+from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QBrush, QRadialGradient, QPen
+from PyQt6.QtCore import pyqtSlot, QThread, QTimer, Qt, QObject, pyqtSignal, QSize
 
 from src.config import current_config
 from src.core.recorder import AudioRecorder
@@ -118,9 +118,85 @@ class GhostApp(QObject):
             print(f"Warning: Could not check accessibility permissions: {e}")
             return False
 
+    def create_tray_icon(self):
+        """Programmatically draws the Ghost Flow icon (Purple Waveform) at high res."""
+        # Use 128x128 for Retina sharpness
+        size = 128
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Background circle for contrast
+        circle_size = 126
+        circle_x = (size - circle_size) // 2
+        circle_y = (size - circle_size) // 2
+        gradient = QRadialGradient(size / 2, size / 2, circle_size / 2)
+        gradient.setColorAt(0.0, QColor(24, 24, 38))   # Deep slate
+        gradient.setColorAt(0.7, QColor(12, 12, 20))   # Darker edge
+        gradient.setColorAt(1.0, QColor(5, 5, 10))     # Outer ring
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(circle_x, circle_y, circle_size, circle_size)
+
+        # Thin ring for separation from tray background
+        ring_pen = QPen(QColor(255, 255, 255, 40))
+        ring_pen.setWidth(2)
+        painter.setPen(ring_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(circle_x, circle_y, circle_size, circle_size)
+        
+        # Colors (Gradient-like steps)
+        # Indigo -> Purple -> Fuchsia
+        c1 = QColor(99, 102, 241)   # Indigo-500
+        c2 = QColor(168, 85, 247)   # Purple-500
+        c3 = QColor(236, 72, 153)   # Pink-500
+
+        # Soft glow behind bars
+        glow = QColor(99, 102, 241, 90)
+        painter.setPen(Qt.PenStyle.NoPen)
+        
+        # Dimensions calculations
+        # 3 bars, 20px wide, 14px gap. Total width = 60 + 28 = 88.
+        # Center X = 64. Start X = 64 - 44 = 20.
+        bar_w = 20
+        gap = 12
+        radius = 9
+        start_x = (size - (bar_w * 3 + gap * 2)) // 2
+        
+        # 1. Left Bar (Small)
+        h1 = 48
+        y1 = (size - h1) // 2
+        painter.setBrush(QBrush(glow))
+        painter.drawRoundedRect(start_x - 1, y1 - 2, bar_w + 2, h1 + 4, radius + 2, radius + 2)
+        painter.setBrush(QBrush(c1))
+        painter.drawRoundedRect(start_x, y1, bar_w, h1, radius, radius)
+        
+        # 2. Center Bar (Tall)
+        h2 = 88
+        y2 = (size - h2) // 2
+        x2 = start_x + bar_w + gap
+        painter.setBrush(QBrush(glow))
+        painter.drawRoundedRect(x2 - 1, y2 - 2, bar_w + 2, h2 + 4, radius + 2, radius + 2)
+        painter.setBrush(QBrush(c2))
+        painter.drawRoundedRect(x2, y2, bar_w, h2, radius, radius)
+        
+        # 3. Right Bar (Medium)
+        h3 = 64
+        y3 = (size - h3) // 2
+        x3 = x2 + bar_w + gap
+        painter.setBrush(QBrush(glow))
+        painter.drawRoundedRect(x3 - 1, y3 - 2, bar_w + 2, h3 + 4, radius + 2, radius + 2)
+        painter.setBrush(QBrush(c3))
+        painter.drawRoundedRect(x3, y3, bar_w, h3, radius, radius)
+        
+        painter.end()
+        return QIcon(pixmap)
+
     def setup_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon.fromTheme("audio-input-microphone"))
+        self.tray_icon.setIcon(self.create_tray_icon())
         
         menu = QMenu()
         show_action = QAction("Show Settings", self)
@@ -187,7 +263,6 @@ class GhostApp(QObject):
             return
         
         # Map nice abstract names to actual macOS system sounds
-        # System sounds usually in /System/Library/Sounds/
         sound_map = {
             "start": "/System/Library/Sounds/Tink.aiff",
             "stop": "/System/Library/Sounds/Pop.aiff",

@@ -68,11 +68,11 @@
             height: 100%;
             display: flex;
             align-items: center;
-            justify-content: center; /* Centered in the Python window */
+            justify-content: center;
             background: transparent;
             font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         }
-        /* Fallback pill style matched to new react style */
+        /* Fallback pill style */
         .gf-overlay-pill {
             display: inline-flex;
             align-items: center;
@@ -80,14 +80,14 @@
             padding: 8px 12px;
             border-radius: 12px;
             background: rgba(15, 15, 15, 0.95);
-            border: 1px solid rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.05); /* reduced opacity */
             color: #e5e7eb;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
             transition: all 180ms ease;
         }
         .gf-overlay-pill.gf-done {
             background: rgba(20, 20, 20, 0.95);
-            border-color: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.1);
         }
         .gf-overlay-dot {
             width: 6px;
@@ -353,7 +353,7 @@
             };
 
             // --- OVERLAY WIDGET ---
-            // Unify states into one container for smooth transition
+            // Subtle border: border-white/5 (very faint)
             function OverlayWidget({ stage, text }) {
                 const isProcessing = stage === 'processing';
                 const isDone = stage === 'done';
@@ -363,9 +363,12 @@
 
                 return (
                     <div className={`
-                        flex items-center gap-3 px-4 py-2.5 rounded-xl shadow-lg backdrop-blur-sm border 
+                        flex items-center gap-3 px-4 py-2.5 
+                        rounded-xl 
+                        bg-[#121212] 
+                        border border-white/5 
+                        shadow-none
                         transition-all duration-300 ease-out transform scale-100 origin-center
-                        ${isDone ? 'bg-neutral-900/95 border-white/20' : 'bg-black/90 border-white/10'}
                     `}>
                         {/* Icon Area */}
                         <div className="relative flex items-center justify-center w-6 h-6 shrink-0">
