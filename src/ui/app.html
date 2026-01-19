@@ -293,8 +293,9 @@
 
             // --- CONSTANTS ---
             const AUDIO_MODELS = [
-                { id: 'whisper-1', label: 'Whisper-1 (Standard)' },
-                { id: 'gpt-4o-mini-transcribe-2025-12-15', label: 'GPT-4o Mini Transcribe (Realtime)' }
+                { id: 'whisper-1', label: 'Whisper-1 (OpenAI Cloud)' },
+                { id: 'gpt-4o-mini-transcribe-2025-12-15', label: 'GPT-4o Mini Transcribe (Realtime Cloud)' },
+                { id: 'local-parakeet', label: 'NVIDIA Parakeet (Local/Offline)' }
             ];
 
             const REFINEMENT_MODELS = [
@@ -304,6 +305,7 @@
             ];
 
             const isWhisperModel = (modelId) => (modelId || '').toLowerCase().includes('whisper');
+            const isLocalModel = (modelId) => (modelId || '') === 'local-parakeet';
 
             const OVERLAY_POSITIONS = [
                 { id: 'top-right', label: 'Top Right' },
@@ -356,7 +358,7 @@
             // Subtle border: border-white/5 (very faint)
             function OverlayWidget({ stage, text }) {
                 const isListening = stage === 'listening' || stage === 'processing';
-                const displayText = (text && text.trim()) ? text : 'Listening...';
+                const displayText = (text && text.trim()) ? text : (stage === 'processing' ? 'Processing...' : 'Listening...');
 
                 if (stage === 'idle' || stage === 'done') return null;
 
@@ -560,7 +562,7 @@
                         return { 
                             dot: 'bg-purple-500 animate-pulse', 
                             label: 'Processing...', 
-                            sub: 'Ghost Flow is thinking', 
+                            sub: text || 'Ghost Flow is thinking', 
                             textClass: 'text-purple-400' 
                         };
                     }
@@ -663,7 +665,7 @@
                                             <Toggle active={settings.sound_feedback} onClick={() => updateSetting('sound_feedback', !settings.sound_feedback)} />
                                         </div>
 
-                                        <div className="p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
+                                        <div className={`p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors ${isLocalModel(settings.transcription_model) ? 'opacity-50 pointer-events-none' : ''}`}>
                                             <div className="flex items-center justify-between">
                                                 <div className="space-y-1">
                                                     <h3 className="font-medium">Streaming Mode</h3>
@@ -705,6 +707,7 @@
                                                     />
                                                 </div>
                                             </div>
+                                            {isLocalModel(settings.transcription_model) && <div className="mt-2 text-[10px] text-indigo-400">Streaming is always enabled for local models.</div>}
                                         </div>
                                         
                                         <div className="p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-colors">
@@ -736,19 +739,6 @@
                                     </header>
                                     <section className="space-y-6">
                                         <div>
-                                            <label className="block text-sm font-medium mb-2">OpenAI API Key</label>
-                                            <div className="relative">
-                                                <input 
-                                                    type="password" 
-                                                    value={settings.openai_api_key} 
-                                                    onChange={(e) => updateSetting('openai_api_key', e.target.value)}
-                                                    placeholder="sk-proj-..."
-                                                    className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono"
-                                                />
-                                            </div>
-                                        </div>
-                                        
-                                        <div>
                                             <label className="block text-sm font-medium mb-2">Audio Input Model (Transcription)</label>
                                             <select 
                                                 value={settings.transcription_model}
@@ -759,7 +749,28 @@
                                                     <option key={m.id} value={m.id}>{m.label}</option>
                                                 ))}
                                             </select>
+                                            {isLocalModel(settings.transcription_model) && (
+                                                <div className="mt-2 text-xs text-indigo-400 flex items-center gap-2">
+                                                    <Icons.Check size={12} />
+                                                    <span>Runs entirely offline on your CPU (via Sherpa-ONNX).</span>
+                                                </div>
+                                            )}
                                         </div>
+
+                                        {!isLocalModel(settings.transcription_model) && (
+                                            <div>
+                                                <label className="block text-sm font-medium mb-2">OpenAI API Key</label>
+                                                <div className="relative">
+                                                    <input 
+                                                        type="password" 
+                                                        value={settings.openai_api_key} 
+                                                        onChange={(e) => updateSetting('openai_api_key', e.target.value)}
+                                                        placeholder="sk-proj-..."
+                                                        className="w-full bg-neutral-900 border border-white/10 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/50 text-gray-300 font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
 
                                         {isWhisperModel(settings.transcription_model) ? (
                                             <>
@@ -787,7 +798,10 @@
                                             </>
                                         ) : (
                                             <div className="text-xs text-gray-500 bg-black/20 border border-white/5 rounded-lg p-3">
-                                                Realtime transcription models return final text directly and skip post-processing.
+                                                {isLocalModel(settings.transcription_model) 
+                                                    ? "Local models provide raw transcription. Advanced grammar refinement is disabled to keep it offline."
+                                                    : "Realtime transcription models return final text directly and skip post-processing."
+                                                }
                                             </div>
                                         )}
                                     </section>

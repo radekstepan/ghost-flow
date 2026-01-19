@@ -17,6 +17,10 @@ from src.core.recorder import AudioRecorder
 from src.core.ai import AIProcessor, is_whisper_model
 from src.core.history import HistoryManager
 
+# New modules for local inference
+from src.core.model_manager import ModelManager, ModelDownloader
+from src.core.local_engine import LocalParakeetEngine
+
 # New GUI components
 from src.gui.bridge import UIBridge
 from src.gui.web_window import WebWindow
@@ -64,13 +68,14 @@ class StreamingTranscriptionWorker(QThread):
     session_finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, frame_queue, sample_rate, vad_silence_ms=600, vad_aggressiveness=2, min_segment_ms=300):
+    def __init__(self, frame_queue, sample_rate, vad_silence_ms=600, vad_aggressiveness=2, min_segment_ms=300, local_engine=None):
         super().__init__()
         self.frame_queue = frame_queue
         self.sample_rate = sample_rate
         self.vad_silence_ms = vad_silence_ms
         self.vad_aggressiveness = vad_aggressiveness
         self.min_segment_ms = min_segment_ms
+        self.local_engine = local_engine # If provided, we use local parakeet
         self._stop_requested = False
         self._error_emitted = False
         self.processor = AIProcessor()
@@ -103,8 +108,91 @@ class StreamingTranscriptionWorker(QThread):
             self._finalized_segments.append(text.strip())
             self.partial_update.emit(self._finalized_text(), text.strip())
 
+    def run_local(self):
+        """Logic for Local Parakeet Engine (No VAD segmentation needed for the engine itself)"""
+        print("DEBUG: StreamingTranscriptionWorker running in LOCAL mode")
+        if not self.local_engine:
+            self.error.emit("Local engine not initialized")
+            return
+
+        self.local_engine.start_stream()
+        
+        while True:
+            if self._stop_requested and self.frame_queue.empty():
+                break
+            try:
+                frame = self.frame_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if frame is None:
+                continue
+            
+            frame_bytes = self._frame_bytes(frame)
+            
+            # Feed to local engine
+            try:
+                partial = self.local_engine.process_audio(frame_bytes)
+                # For Parakeet, 'partial' is the full text so far for this stream.
+                # We map it to live_text. finalized_text stays empty until we stop.
+                self.partial_update.emit("", partial)
+            except Exception as e:
+                print(f"Error in local inference: {e}")
+                
+        # Final cleanup
+        final_text = ""
+        try:
+            self.local_engine.stop_stream()
+            # In local mode, the last partial is effectively the final result
+            # But let's re-read if possible or just use the last emitted value.
+            # LocalEngine.process_audio returns the cumulative text.
+            pass 
+        except Exception:
+            pass
+        
+        # We don't have the last partial stored here in a var, but the loop just finished.
+        # Actually, in streaming, we usually just want to emit the final "session finished".
+        # We rely on the session_finished emit from main app logic or we can track it here.
+        # Let's track last text.
+        
     def run(self):
-        print("DEBUG: StreamingTranscriptionWorker started")
+        if self.local_engine:
+            # Use simplified local loop
+            print("DEBUG: StreamingTranscriptionWorker started (Local Mode)")
+            last_text = ""
+            self.local_engine.start_stream()
+            while True:
+                if self._stop_requested and self.frame_queue.empty():
+                    break
+                try:
+                    frame = self.frame_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                
+                if frame is None:
+                    continue
+                    
+                frame_bytes = self._frame_bytes(frame)
+                try:
+                    text = self.local_engine.process_audio(frame_bytes)
+                    if text != last_text:
+                        last_text = text
+                        self.partial_update.emit("", text)
+                except Exception as e:
+                    self.error.emit(f"Local Engine Error: {e}")
+                    return
+            
+            try:
+                final_text = self.local_engine.stop_stream()
+                if final_text:
+                    last_text = final_text
+            except Exception:
+                pass
+            
+            self.session_finished.emit(last_text)
+            return
+
+        # --- OpenAI / Cloud Logic (Original) ---
+        print("DEBUG: StreamingTranscriptionWorker started (Cloud Mode)")
         if webrtcvad is None:
             self.error.emit("Streaming VAD not available.")
             return
@@ -191,6 +279,11 @@ class GhostApp(QObject):
         self.streaming_worker = None
         self.streaming_queue = None
         self.streaming_stop_requested = False
+        
+        # Local Engine State
+        self.local_engine = None
+        self.download_worker = None
+        self.is_local_session = False
         
         # State for Hybrid Trigger (Hold for PTT, Tap for Toggle)
         self.recording_start_time = 0.0
@@ -468,15 +561,55 @@ class GhostApp(QObject):
         # Ensure position is correct (in case config changed)
         self.reposition_overlay()
         
-        # Show Overlay using specialized method to prevent focus stealing
+        # Show Overlay
         self.overlay_window.show_overlay()
-        
         self._update_overlay("listening", "")
+
+        # --- Check Local Model ---
+        is_local = current_config.transcription_model == "local-parakeet"
+        self.is_local_session = is_local
+        if is_local:
+            if not ModelManager.is_model_ready():
+                print("DEBUG: Local model missing. Starting download...")
+                self._update_overlay("processing", "Downloading Model...")
+                
+                self.download_worker = ModelDownloader()
+                self.download_worker.progress_update.connect(
+                    lambda msg: self._update_overlay("processing", msg)
+                )
+                self.download_worker.finished.connect(self.on_download_finished)
+                
+                # We must start download in a separate thread so we don't block GUI
+                self.download_thread = QThread()
+                self.download_worker.moveToThread(self.download_thread)
+                self.download_thread.started.connect(self.download_worker.run)
+                self.download_thread.start()
+                return # Abort actual recording until download finishes
+            
+            # Initialize Engine if needed
+            if not self.local_engine:
+                try:
+                    self._update_overlay("processing", "Loading Engine...")
+                    QApplication.processEvents() # Force UI repaint
+                    self.local_engine = LocalParakeetEngine(ModelManager.get_model_paths())
+                    print("DEBUG: Local Parakeet Engine Loaded")
+                except Exception as e:
+                    print(f"Error loading local engine: {e}")
+                    self._update_overlay("done", "Engine Error")
+                    QTimer.singleShot(2000, self.reset_ui)
+                    return
         
-        use_streaming = current_config.streaming_enabled
-        print(f"DEBUG: Streaming enabled={use_streaming}, vad_silence_ms={current_config.vad_silence_ms}, vad_aggressiveness={current_config.vad_aggressiveness}, webrtcvad_available={webrtcvad is not None}")
-        if use_streaming and webrtcvad is None:
-            print("WARNING: webrtcvad not available. Falling back to batch mode.")
+        # --- Start Audio Capture ---
+        use_streaming = current_config.streaming_enabled or is_local
+        
+        # Force streaming ON for local model because it's designed for it
+        if is_local: 
+            use_streaming = True
+
+        print(f"DEBUG: Streaming={use_streaming}, is_local={is_local}")
+        
+        if use_streaming and webrtcvad is None and not is_local:
+            print("WARNING: webrtcvad not available. Falling back to batch mode for Cloud.")
             use_streaming = False
 
         try:
@@ -484,17 +617,23 @@ class GhostApp(QObject):
                 print("DEBUG: Starting in streaming mode")
                 self.streaming_stop_requested = False
                 self.streaming_queue = queue.Queue(maxsize=200)
+                
+                # Pass local engine if applicable
                 self.streaming_worker = StreamingTranscriptionWorker(
                     self.streaming_queue,
                     self.recorder.sample_rate,
                     vad_silence_ms=current_config.vad_silence_ms,
-                    vad_aggressiveness=current_config.vad_aggressiveness
+                    vad_aggressiveness=current_config.vad_aggressiveness,
+                    local_engine=self.local_engine if is_local else None
                 )
                 self.streaming_worker.partial_update.connect(self.on_stream_partial)
                 self.streaming_worker.session_finished.connect(self.on_stream_final)
                 self.streaming_worker.error.connect(self.on_stream_error)
                 self.streaming_worker.start()
                 self.recorder.start_streaming(self.streaming_queue)
+                
+                if is_local:
+                     self._update_overlay("listening", "Local Mode Ready")
             else:
                 print("DEBUG: Starting in batch mode")
                 self.recorder.start()
@@ -502,10 +641,30 @@ class GhostApp(QObject):
             print(f"Recorder Error: {e}")
             self._update_overlay("done", "Mic Error")
 
+    @pyqtSlot(bool, str)
+    def on_download_finished(self, success, msg):
+        self.download_thread.quit()
+        self.download_thread.wait()
+        
+        if success:
+            print("DEBUG: Model download complete.")
+            self._update_overlay("done", "Model Ready")
+            self.play_sound("success")
+            QTimer.singleShot(1000, self.reset_ui)
+        else:
+            print(f"Error downloading model: {msg}")
+            self._update_overlay("done", "Download Failed")
+            self.play_sound("error")
+            QTimer.singleShot(2000, self.reset_ui)
+
     @pyqtSlot()
     def on_stop_recording(self):
         # Prevent stopping if not recording
         if not self.recorder.is_recording: return
+        
+        # If we were downloading, stopping does nothing but maybe cancel logic (not implemented)
+        if hasattr(self, 'download_thread') and self.download_thread.isRunning():
+            return
 
         print("DEBUG: Stopping recording...")
         self.play_sound("stop")
@@ -518,7 +677,10 @@ class GhostApp(QObject):
                 self.recorder.stop_streaming()
                 if self.streaming_worker:
                     self.streaming_worker.request_stop()
-                self._update_overlay("idle", "")
+                
+                # If local, we don't clear overlay immediately, we wait for session_finished
+                if not self.is_local_session:
+                    self._update_overlay("idle", "")
             except Exception as e:
                 print(f"Recorder Stop Error: {e}")
                 self.reset_ui()
@@ -548,25 +710,18 @@ class GhostApp(QObject):
     def on_ai_success(self, text):
         print(f"DEBUG: Success Result: {text}")
         
-        # Save to History
         HistoryManager.add(text)
-        
         self._update_overlay("done", text)
         
-        # Copy & Paste
         pyperclip.copy(text)
         QThread.msleep(100)
-        # Use a timer to paste so we don't block
         QTimer.singleShot(100, lambda: pyautogui.hotkey('command', 'v'))
-        
-        # Hide after 2 seconds
         QTimer.singleShot(2500, self.reset_ui)
 
     @pyqtSlot(str)
     def on_ai_error(self, msg):
         print(f"DEBUG: AI Error Signal Received: {msg}")
         self.play_sound("error")
-        # Strip generic python error text to keep overlay clean if possible
         display_msg = "Error"
         if "API Key" in msg:
             display_msg = "No API Key"
@@ -580,9 +735,17 @@ class GhostApp(QObject):
     def on_stream_partial(self, finalized_text, live_text):
         if self.streaming_stop_requested:
             return
+            
+        # For local, finalized_text is often empty until the end, live_text is the full buffer
+        if self.is_local_session:
+            self._update_overlay("listening", live_text)
+            return
+            
+        # For Cloud/VAD
         payload_text = live_text or ""
         if payload_text:
             self._update_overlay("listening", payload_text, finalized=finalized_text, live=live_text)
+            # Experimental: Auto-paste chunks
             paste_text = payload_text.strip()
             if paste_text:
                 if not paste_text.endswith((" ", "\n", "\t")):
@@ -627,10 +790,11 @@ class GhostApp(QObject):
         self.streaming_worker = None
         self.streaming_queue = None
         self.streaming_stop_requested = False
-        # Note: self.recording_mode is managed by key listener thread to avoid races.
+        self.is_local_session = False
 
     def _update_overlay(self, stage, text, **extra):
-        print(f"DEBUG: _update_overlay called with stage={stage}, text={text}")
+        # Throttle log
+        # print(f"DEBUG: _update_overlay called with stage={stage}, text={text}")
         payload = {"stage": stage, "text": text}
         payload.update(extra)
         data = json.dumps(payload)

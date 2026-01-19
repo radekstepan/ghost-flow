@@ -11,3 +11,4 @@ pyautogui
 python-dotenv
 webrtcvad>=2.0.10
 setuptools
+sherpa-onnx>=1.10.0
