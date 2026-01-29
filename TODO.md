@@ -1,2 +1,0 @@
-- improve transcription pasting, timing, any odditions. How does 4o work in comparison to Whisper + 5 mini.
-- could we run this locally? Use nvidia/parakeet-tdt-0.6b-v3
